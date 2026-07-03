@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Expo
+**/.expo/
+**/dist/
+**/web-build/
+**/expo-env.d.ts
+
+# Native builds
+**/android/
+**/ios/
+**/.kotlin/
+
+# Secrets
+.env
+**/.env
+**/.env.local
+**/.env*.local
+
+# Native signing
+**/*.jks
+**/*.p8
+**/*.p12
+**/*.key
+**/*.mobileprovision
+**/*.pem
+
+# Metro
+**/.metro-health-check*
+
+# Debug logs
+**/npm-debug.*
+**/yarn-debug.*
+**/yarn-error.*
+*.log
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# TypeScript
+**/*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/

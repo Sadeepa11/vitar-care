@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -v \"https://vitar.medi.lk/socket.io/?EIO=4&transport=websocket\" -o NUL)",
+      "Bash(curl -s \"https://vitar.medi.lk/socket.io/?EIO=4&transport=polling\")",
+      "Bash(curl -s \"https://vitar.medi.lk/\")",
+      "Bash(curl -s -o NUL -w \"%{http_code}\" \"https://vitar.medi.lk/socket.io/?EIO=4&transport=polling\")",
+      "Bash(curl -s -o NUL -w \"%{http_code}\" \"https://vitar.medi.lk/ws\")",
+      "Bash(curl -s -o NUL -w \"%{http_code}\" \"https://vitar.medi.lk/api/socket.io/?EIO=4&transport=polling\")"
+    ]
+  }
+}
