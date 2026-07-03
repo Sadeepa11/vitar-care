@@ -13,14 +13,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { useAuth } from '../../src/context/AuthContext';
 import { useLocation } from '../../src/context/LocationContext';
-import { Nurse } from '../../src/types';
+import { Nurse, Patient } from '../../src/types';
 import NurseAvatarMarker from '../../src/components/NurseAvatarMarker';
-
-const SAMPLE_NURSES: Nurse[] = [];
-const SAMPLE_VEHICLES: any[] = [];
 import VehicleMarker from '../../src/components/VehicleMarker';
 import NurseMemberCard from '../../src/components/NurseMemberCard';
 import UserLocationMarker from '../../src/components/UserLocationMarker';
+import PatientMarker from '../../src/components/PatientMarker';
+import PatientCard from '../../src/components/PatientCard';
+import { trackingApi, patientsApi } from '../../src/services/api';
 
 MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_PK ?? '');
 
@@ -39,8 +39,13 @@ const isValidCoordinate = (coords: any): coords is [number, number] => {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { userEmail, userId } = useAuth();
+  const { userEmail, userId, authToken } = useAuth();
   const [selectedNurse, setSelectedNurse] = useState<Nurse | null>(null);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [nurseTeam, setNurseTeam] = useState<Nurse[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [activeTab, setActiveTab] = useState<'nurses' | 'patients'>('nurses');
   const { userCoords: rawUserCoords, requestLocation } = useLocation();
   const userCoords = rawUserCoords || DOHA_CENTER;
 
@@ -52,8 +57,8 @@ export default function HomeScreen() {
   // Exclude the logged-in user from the team list to remove duplication
   const loggedInNurseId = userId || '1';
   const teamNurses = useMemo(() => {
-    return SAMPLE_NURSES.filter(n => n.id !== loggedInNurseId);
-  }, [loggedInNurseId]);
+    return nurseTeam.filter(n => n.id !== loggedInNurseId);
+  }, [nurseTeam, loggedInNurseId]);
 
   // Derive dynamic details for the logged-in nurse
   const myNurseInfo = useMemo(() => {
@@ -68,7 +73,7 @@ export default function HomeScreen() {
       initials = ((firstName.charAt(0) || '') + (lastName.charAt(0) || '')).toUpperCase() || 'N';
     }
 
-    const baseNurse = (SAMPLE_NURSES.find(n => n.id === loggedInNurseId) || {}) as Partial<Nurse>;
+    const baseNurse = (nurseTeam.find(n => n.id === loggedInNurseId) || {}) as Partial<Nurse>;
 
     return {
       id: loggedInNurseId,
@@ -94,6 +99,118 @@ export default function HomeScreen() {
       setHasFlippedToUser(true);
     }
   }, [rawUserCoords, hasFlippedToUser]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    async function fetchDriverLocation() {
+      const result = await trackingApi.getNurseDriverLocation(userId!, authToken);
+      if (result.success && result.lat != null && result.lng != null) {
+        setVehicles([{
+          id: 'driver',
+          name: 'Van',
+          driver: result.driverName ?? 'Driver',
+          lat: result.lat,
+          lng: result.lng,
+          speed: result.speed ?? 0,
+          capacity: 0,
+          nursesOnBoard: 0,
+        }]);
+      } else {
+        setVehicles([]);
+      }
+    }
+
+    fetchDriverLocation();
+    const interval = setInterval(fetchDriverLocation, 10000);
+    return () => clearInterval(interval);
+  }, [userId, authToken]);
+
+  useEffect(() => {
+    if (!authToken) return;
+
+    function mapLocToNurse(loc: any, index: number): Nurse {
+      const name = String(loc.name ?? loc.full_name ?? loc.fullName ?? 'Nurse');
+      const parts = name.trim().split(/\s+/);
+      const initials = ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'N';
+      return {
+        id: String(loc.id ?? loc.user_id ?? index),
+        name,
+        initials,
+        lat: Number(loc.lat ?? loc.latitude ?? 0),
+        lng: Number(loc.lng ?? loc.longitude ?? 0),
+        status: loc.status ?? 'at_work',
+        battery: Number(loc.battery ?? 100),
+        lastSeen: loc.last_seen ?? loc.lastSeen ?? 'Just now',
+        zone: loc.zone ?? 'Doha',
+        phone: String(loc.phone ?? loc.phone_number ?? ''),
+      };
+    }
+
+    async function fetchAllLocations() {
+      const result = await trackingApi.getAllLocations(authToken);
+      if (!result.success || result.locations.length === 0) return;
+
+      const nurses: Nurse[] = [];
+      const driverVehicles: any[] = [];
+
+      result.locations.forEach((loc: any, index: number) => {
+        const role = String(loc.role ?? loc.user_role ?? loc.type ?? '').toLowerCase();
+        if (role === 'driver') {
+          driverVehicles.push({
+            id: String(loc.id ?? loc.user_id ?? `driver-${index}`),
+            name: loc.vehicle_name ?? loc.vehicleName ?? 'Van',
+            driver: loc.name ?? 'Driver',
+            lat: Number(loc.lat ?? loc.latitude ?? 0),
+            lng: Number(loc.lng ?? loc.longitude ?? 0),
+            speed: Number(loc.speed ?? 0),
+            capacity: 0,
+            nursesOnBoard: 0,
+          });
+        } else {
+          nurses.push(mapLocToNurse(loc, index));
+        }
+      });
+
+      if (nurses.length > 0) setNurseTeam(nurses);
+      if (driverVehicles.length > 0) setVehicles(driverVehicles);
+    }
+
+    fetchAllLocations();
+    const interval = setInterval(fetchAllLocations, 10000);
+    return () => clearInterval(interval);
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken) return;
+
+    function mapPatient(raw: any, index: number): Patient {
+      const name = String(raw.name ?? raw.full_name ?? raw.fullName ?? 'Patient');
+      const parts = name.trim().split(/\s+/);
+      const initials = ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'P';
+      return {
+        id: String(raw.id ?? index),
+        name,
+        initials,
+        lat: Number(raw.lat ?? raw.latitude ?? 0),
+        lng: Number(raw.lng ?? raw.longitude ?? 0),
+        address: String(raw.address ?? raw.location ?? ''),
+        phone: String(raw.phone ?? raw.phone_number ?? ''),
+        condition: raw.condition ?? raw.status ?? undefined,
+      };
+    }
+
+    async function fetchPatients() {
+      const result = await patientsApi.getAll(authToken);
+      if (result.success && result.patients.length > 0) {
+        setPatients(result.patients.map(mapPatient));
+      }
+    }
+
+    fetchPatients();
+    const interval = setInterval(fetchPatients, 30000);
+    return () => clearInterval(interval);
+  }, [authToken]);
 
   const handleNursePress = useCallback((nurse: Nurse) => {
     if (!nurse) return;
@@ -127,6 +244,17 @@ export default function HomeScreen() {
     }
   }, [rawUserCoords, requestLocation]);
 
+  const handlePatientPress = useCallback((patient: Patient) => {
+    if (!patient) return;
+    setSelectedPatient(prev => (prev?.id === patient.id ? null : patient));
+    const pLng = typeof patient.lng === 'number' && !isNaN(patient.lng) ? patient.lng : DOHA_CENTER[0];
+    const pLat = typeof patient.lat === 'number' && !isNaN(patient.lat) ? patient.lat : DOHA_CENTER[1];
+    if (pLat !== 0 || pLng !== 0) {
+      cameraRef.current?.flyTo([pLng, pLat], 900);
+    }
+    bottomSheetRef.current?.snapToIndex(1);
+  }, []);
+
   const renderCard = useCallback(
     ({ item }: { item: Nurse }) => (
       <NurseMemberCard
@@ -136,6 +264,17 @@ export default function HomeScreen() {
       />
     ),
     [selectedNurse, handleNursePress]
+  );
+
+  const renderPatientCard = useCallback(
+    ({ item }: { item: any }) => (
+      <PatientCard
+        patient={item}
+        isSelected={selectedPatient?.id === item.id}
+        onPress={() => handlePatientPress(item)}
+      />
+    ),
+    [selectedPatient, handlePatientPress]
   );
 
   return (
@@ -178,7 +317,7 @@ export default function HomeScreen() {
         })}
 
         {/* Vehicle markers */}
-        {SAMPLE_VEHICLES.filter(v => v !== null && v !== undefined).map(v => {
+        {vehicles.filter(v => v !== null && v !== undefined).map(v => {
           const vLng = typeof v.lng === 'number' && !isNaN(v.lng) ? v.lng : DOHA_CENTER[0];
           const vLat = typeof v.lat === 'number' && !isNaN(v.lat) ? v.lat : DOHA_CENTER[1];
           const vId = v.id || `vehicle-${Math.random()}`;
@@ -191,6 +330,20 @@ export default function HomeScreen() {
             </MapboxGL.MarkerView>
           );
         })}
+
+        {/* Patient markers */}
+        {patients.filter(p => p.lat !== 0 || p.lng !== 0).map(patient => (
+          <MapboxGL.MarkerView
+            key={`patient-${patient.id}`}
+            coordinate={[patient.lng, patient.lat]}
+            anchor={{ x: 0.5, y: 1 }}>
+            <PatientMarker
+              patient={patient}
+              isSelected={selectedPatient?.id === patient.id}
+              onPress={() => handlePatientPress(patient)}
+            />
+          </MapboxGL.MarkerView>
+        ))}
 
         {/* Custom User Location Marker — profile image in green ring */}
         {isValidCoordinate(userCoords) && (
@@ -272,7 +425,12 @@ export default function HomeScreen() {
         </View>
         <View style={[s.chip, { backgroundColor: '#F0FDF4' }]}>
           <Text style={[s.chipText, { color: '#15803D' }]}>
-            🚐 {SAMPLE_VEHICLES.length} Vans
+            🚐 {vehicles.length} Vans
+          </Text>
+        </View>
+        <View style={[s.chip, { backgroundColor: '#FFF1F2' }]}>
+          <Text style={[s.chipText, { color: '#EF4444' }]}>
+            🏥 {patients.length} Patients
           </Text>
         </View>
       </View>
@@ -302,20 +460,27 @@ export default function HomeScreen() {
         snapPoints={snapPoints}
         backgroundStyle={s.sheetBg}
         handleIndicatorStyle={s.sheetHandle}>
-        <View style={s.sheetHeader}>
-          <View>
-            <Text style={s.sheetTitle}>Nurse Team</Text>
-            <Text style={s.sheetSub}>{teamNurses.length} nurses tracked</Text>
-          </View>
-          <TouchableOpacity style={s.filterBtn}>
-            <Text style={s.filterText}>Filter ▾</Text>
+        <View style={s.tabBar}>
+          <TouchableOpacity
+            style={[s.tab, activeTab === 'nurses' && s.tabActive]}
+            onPress={() => setActiveTab('nurses')}>
+            <Text style={[s.tabText, activeTab === 'nurses' && s.tabTextActive]}>
+              Nurses ({teamNurses.length})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.tab, activeTab === 'patients' && s.tabActive]}
+            onPress={() => setActiveTab('patients')}>
+            <Text style={[s.tabText, activeTab === 'patients' && s.tabTextActive]}>
+              Patients ({patients.length})
+            </Text>
           </TouchableOpacity>
         </View>
         <View style={s.divider} />
         <BottomSheetFlatList
-          data={teamNurses}
-          keyExtractor={item => item?.id || Math.random().toString()}
-          renderItem={renderCard}
+          data={activeTab === 'nurses' ? teamNurses : patients}
+          keyExtractor={(item: any) => item?.id?.toString() || Math.random().toString()}
+          renderItem={activeTab === 'nurses' ? renderCard : renderPatientCard}
           contentContainerStyle={{ paddingBottom: 80 }}
           showsVerticalScrollIndicator={false}
         />
@@ -415,24 +580,24 @@ const s = StyleSheet.create({
     borderTopRightRadius: 22,
   },
   sheetHandle: { backgroundColor: '#D1D5DB', width: 38 },
-  sheetHeader: {
+  tabBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 12,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 2,
+    gap: 8,
   },
-  sheetTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
-  sheetSub: { fontSize: 12, color: '#6B7280', marginTop: 2 },
-  filterBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+  tab: {
+    flex: 1,
+    paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#F0FDF4',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
   },
-  filterText: { fontSize: 13, fontWeight: '700', color: '#16A34A' },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: '#E5E7EB' },
+  tabActive: { backgroundColor: '#16A34A' },
+  tabText: { fontSize: 13, fontWeight: '700', color: '#6B7280' },
+  tabTextActive: { color: '#FFF' },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: '#E5E7EB', marginTop: 8 },
 });
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {

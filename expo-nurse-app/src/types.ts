@@ -23,3 +23,14 @@ export interface Vehicle {
   capacity: number;
   nursesOnBoard: number;
 }
+
+export interface Patient {
+  id: string;
+  name: string;
+  initials: string;
+  lat: number;
+  lng: number;
+  address: string;
+  phone: string;
+  condition?: string;
+}

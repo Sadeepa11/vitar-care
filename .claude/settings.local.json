@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"D:\\\\NurcingCenter\" | Select-Object Name, @{Name=\"Type\"; Expression={if\\($_.PSIsContainer\\){\"Dir\"}else{\"File\"}}} | Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"D:\\\\NurcingCenter\\\\expo-driver-app\\\\app\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName | Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"D:\\\\NurcingCenter\\\\expo-driver-app\\\\components\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(ls *)",
+      "PowerShell(Get-ChildItem -Path \"D:\\\\NurcingCenter\" -Force | Where-Object { $_.PSIsContainer } | Select-Object Name)",
+      "Bash(curl *)",
+      "PowerShell(\\(Get-Acl \"D:\\\\Android\\\\Sdk\\\\ndk\\\\29.0.14033849\\\\toolchains\\\\llvm\\\\prebuilt\\\\windows-x86_64\\\\bin\\\\ld.lld.exe\"\\).Access | Select-Object IdentityReference, FileSystemRights, AccessControlType)",
+      "PowerShell(icacls *)"
+    ]
+  }
+}

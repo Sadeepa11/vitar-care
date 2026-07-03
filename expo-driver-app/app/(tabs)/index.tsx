@@ -15,8 +15,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useLocation } from '../../src/context/LocationContext';
 import { AssignedNurse, DriverVehicle } from '../../src/types';
 import NursePinMarker from '../../src/components/NursePinMarker';
-
-const ASSIGNED_NURSES: AssignedNurse[] = [];
+import { trackingApi } from '../../src/services/api';
 const MY_VEHICLE: DriverVehicle = {
   id: '',
   name: '',
@@ -87,19 +86,20 @@ function PickupCard({
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { userEmail } = useAuth();
+  const { userEmail, userId, authToken } = useAuth();
   const { userCoords: rawUserCoords, requestLocation } = useLocation();
   const userCoords = rawUserCoords || DOHA_CENTER;
 
   const [selected, setSelected] = useState<AssignedNurse | null>(null);
+  const [assignedNurses, setAssignedNurses] = useState<AssignedNurse[]>([]);
   const [hasFlippedToUser, setHasFlippedToUser] = useState(false);
   const [routeGeojson, setRouteGeojson] = useState<GeoJSON.Feature<GeoJSON.LineString> | null>(null);
   const bottomSheetRef = useRef<BottomSheet>(null);
   const cameraRef = useRef<MapboxGL.Camera>(null);
   const snapPoints = useMemo(() => ['16%', '50%', '90%'], []);
 
-  const nextNurse = ASSIGNED_NURSES.find(n => n.status === 'waiting');
-  const pickedUp = ASSIGNED_NURSES.filter(n => n.status === 'picked_up').length;
+  const nextNurse = assignedNurses.find(n => n.status === 'waiting');
+  const pickedUp = assignedNurses.filter(n => n.status === 'picked_up').length;
 
   const nameToShow = useMemo(() => {
     if (userEmail) {
@@ -165,6 +165,40 @@ export default function HomeScreen() {
       active = false;
     };
   }, [rawUserCoords, nextNurse]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    function mapNurse(raw: any, index: number): AssignedNurse {
+      const name = String(raw.name ?? raw.full_name ?? raw.fullName ?? 'Nurse');
+      const parts = name.trim().split(/\s+/);
+      const initials = ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'N';
+      return {
+        id: String(raw.id ?? raw.user_id ?? raw.userId ?? index),
+        name,
+        initials,
+        lat: Number(raw.lat ?? raw.latitude ?? 0),
+        lng: Number(raw.lng ?? raw.longitude ?? 0),
+        address: String(raw.address ?? raw.location ?? ''),
+        zone: String(raw.zone ?? ''),
+        phone: String(raw.phone ?? raw.phone_number ?? ''),
+        pickupOrder: Number(raw.pickup_order ?? raw.pickupOrder ?? index + 1),
+        status: raw.status ?? 'waiting',
+        etaMinutes: Number(raw.eta_minutes ?? raw.etaMinutes ?? 0),
+      };
+    }
+
+    async function fetchNurses() {
+      const result = await trackingApi.getDriverNurses(userId!, authToken);
+      if (result.success && result.nurses.length > 0) {
+        setAssignedNurses(result.nurses.map(mapNurse));
+      }
+    }
+
+    fetchNurses();
+    const interval = setInterval(fetchNurses, 10000);
+    return () => clearInterval(interval);
+  }, [userId, authToken]);
 
   const flyToUser = useCallback(async () => {
     const coords = await requestLocation();
@@ -232,7 +266,7 @@ export default function HomeScreen() {
         )}
 
         {/* Nurse pins */}
-        {ASSIGNED_NURSES.filter(nurse => nurse !== null && nurse !== undefined).map(nurse => {
+        {assignedNurses.filter(nurse => nurse !== null && nurse !== undefined).map(nurse => {
           const nurseLng = typeof nurse.lng === 'number' && !isNaN(nurse.lng) ? nurse.lng : DOHA_CENTER[0];
           const nurseLat = typeof nurse.lat === 'number' && !isNaN(nurse.lat) ? nurse.lat : DOHA_CENTER[1];
           const nurseId = nurse.id || `nurse-${Math.random()}`;
@@ -279,7 +313,7 @@ export default function HomeScreen() {
         </View>
         <View style={s.topRight}>
           <View style={s.progressPill}>
-            <Text style={s.progressText}>{pickedUp}/{ASSIGNED_NURSES.length}</Text>
+            <Text style={s.progressText}>{pickedUp}/{assignedNurses.length}</Text>
             <Text style={s.progressLabel}> picked</Text>
           </View>
           <TouchableOpacity style={s.iconBtn}>
@@ -299,7 +333,7 @@ export default function HomeScreen() {
         </View>
         <View style={[s.chip, {backgroundColor: '#FEF3C7'}]}>
           <Text style={[s.chipText, {color: '#B45309'}]}>
-            ⏳ {ASSIGNED_NURSES.length - pickedUp} Waiting
+            ⏳ {assignedNurses.length - pickedUp} Waiting
           </Text>
         </View>
         {nextNurse && (
@@ -331,21 +365,21 @@ export default function HomeScreen() {
           <View>
             <Text style={s.sheetTitle}>Today's Route</Text>
             <Text style={s.sheetSub}>
-              {pickedUp} of {ASSIGNED_NURSES.length} nurses picked up
+              {pickedUp} of {assignedNurses.length} nurses picked up
             </Text>
           </View>
           <View style={s.progressBar}>
             <View
               style={[
                 s.progressFill,
-                {width: `${(pickedUp / (ASSIGNED_NURSES.length || 1)) * 100}%` as any},
+                {width: `${(pickedUp / (assignedNurses.length || 1)) * 100}%` as any},
               ]}
             />
           </View>
         </View>
         <View style={s.divider} />
         <BottomSheetFlatList
-          data={ASSIGNED_NURSES}
+          data={assignedNurses}
           keyExtractor={item => item?.id || Math.random().toString()}
           renderItem={renderCard}
           contentContainerStyle={{paddingBottom: 80}}
