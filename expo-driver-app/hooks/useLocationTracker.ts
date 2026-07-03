@@ -18,34 +18,31 @@ export function useLocationTracker() {
     }
 
     const currentUserId = userId;
-
     let socket: Socket | null = null;
+
     try {
-      socket = io('https://vitar.medi.lk:8001', {
+    
+      socket = io('https://vitar.medi.lk:8000', {
         transports: ['websocket'],
         reconnection: true,
-        reconnectionAttempts: 3,
+        reconnectionAttempts: 5,
         reconnectionDelay: 5000,
         reconnectionDelayMax: 10000,
-        timeout: 8000,
+        timeout: 10000,
         autoConnect: true,
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
-        console.log('Socket connected for user ID:', currentUserId);
+        console.log('✅ Socket connected for user ID:', currentUserId);
       });
 
       socket.on('connect_error', (error) => {
-        console.log('Socket connection error:', error.message);
-      });
-
-      socket.on('error', (error) => {
-        console.log('Socket error:', error);
+        console.log('❌ Socket connection error:', error.message);
       });
 
       socket.on('disconnect', (reason) => {
-        console.log('Socket disconnected:', reason);
+        console.log('🔌 Socket disconnected:', reason);
       });
     } catch (err) {
       console.log('Socket init failed:', err);
@@ -79,8 +76,10 @@ export function useLocationTracker() {
             const numericUserId = parseInt(currentUserId, 10);
             const resolvedUserId = isNaN(numericUserId) ? currentUserId : numericUserId;
 
-            if (socketRef.current?.connected) {
-              socketRef.current.emit('update_location', {
+   
+            if (socket && socket.connected) {
+              console.log(`📡 Emitting location for user ${resolvedUserId}`);
+              socket.emit('update_location', {
                 user_id: resolvedUserId,
                 latitude,
                 longitude,
@@ -102,7 +101,9 @@ export function useLocationTracker() {
     return () => {
       subscriptionRef.current?.remove();
       subscriptionRef.current = null;
-      socketRef.current?.disconnect();
+      if (socket) {
+        socket.disconnect();
+      }
       socketRef.current = null;
     };
   }, [loggedIn, userId]);
