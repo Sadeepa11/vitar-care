@@ -1,0 +1,43 @@
+# Dependencies (EAS installs these during build)
+node_modules/
+
+# Expo Caches & Build Outputs
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+.metro-health-check*
+
+# Local Native Build Directories & Outputs
+android/build/
+android/app/build/
+android/.gradle/
+android/.kotlin/
+android/app/.cxx/
+ios/build/
+ios/Pods/
+ios/DerivedData/
+
+# App Archives & Binary Files
+*.apk
+*.aab
+*.ipa
+*.tar.gz
+*.zip
+
+# Secrets & Local Envs (EAS uses EAS Secrets)
+.env*.local
+*.keystore
+!debug.keystore
+
+# Logs & Temporary Files
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+.DS_Store
+
+# IDE & Tooling Caches
+.vscode/
+.idea/
+.claude/

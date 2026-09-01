@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "839216749268",
+    "project_id": "vitacare-acdb1",
+    "storage_bucket": "vitacare-acdb1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:839216749268:android:53e87c970af91f2dea3941",
+        "android_client_info": {
+          "package_name": "com.vitacare.driver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCg_diMN8pjULIB9NzOEbqxeeJ0uL8XSrY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:839216749268:android:f7d2b440b16d46c6ea3941",
+        "android_client_info": {
+          "package_name": "com.vitacare.nurse"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCg_diMN8pjULIB9NzOEbqxeeJ0uL8XSrY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -115,6 +115,36 @@ export const authApi = {
 };
 
 export const trackingApi = {
+  async getDriverLocation(
+    token: string | null,
+    dateStr?: string,
+  ): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      const dateParam = dateStr || (() => {
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      })();
+      const response = await fetch(`${API_BASE_URL}/tracking/nurse/driver-location?date=${dateParam}`, {
+        headers: {
+          'accept': '*/*',
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        return { success: true, data };
+      }
+      return { success: false, message: data.message || 'No active trip' };
+    } catch (error: any) {
+      console.error('Tracking API error:', error);
+      return { success: false, message: error?.message || 'Network error' };
+    }
+  },
+
   async getNurseDriverLocation(
     nurseId: string,
     token: string | null,

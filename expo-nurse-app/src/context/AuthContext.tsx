@@ -4,11 +4,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 type AuthContextType = {
   loggedIn: boolean;
   loading: boolean;
-  login: (token?: string, email?: string, userId?: string) => Promise<void>;
+  login: (token?: string, email?: string, userId?: string, country?: string) => Promise<void>;
   logout: () => Promise<void>;
   userEmail: string | null;
   authToken: string | null;
   userId: string | null;
+  userCountry: string | null;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -16,6 +17,7 @@ const SESSION_KEY = '@vitacare_session';
 const TOKEN_KEY = '@vitacare_token';
 const EMAIL_KEY = '@vitacare_email';
 const USER_ID_KEY = '@vitacare_user_id';
+const COUNTRY_KEY = '@vitacare_country';
 
 // Simple JWT decoder fallback in pure JS
 function decodeUserIdFromToken(token: string): string | null {
@@ -62,20 +64,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userCountry, setUserCountry] = useState<string | null>(null);
 
   useEffect(() => {
     const loadSession = async () => {
       try {
-        const [val, token, email, storedUserId] = await Promise.all([
+        const [val, token, email, storedUserId, storedCountry] = await Promise.all([
           AsyncStorage.getItem(SESSION_KEY),
           AsyncStorage.getItem(TOKEN_KEY),
           AsyncStorage.getItem(EMAIL_KEY),
           AsyncStorage.getItem(USER_ID_KEY),
+          AsyncStorage.getItem(COUNTRY_KEY),
         ]);
         if (val === 'true') {
           setLoggedIn(true);
           setAuthToken(token);
           setUserEmail(email);
+          setUserCountry(storedCountry);
           
           if (storedUserId) {
             setUserId(storedUserId);
@@ -97,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadSession();
   }, []);
 
-  const login = async (token?: string, email?: string, uId?: string) => {
+  const login = async (token?: string, email?: string, uId?: string, country?: string) => {
     try {
       let resolvedUserId = uId || '15'; // Default to 15 if not provided
       if (!uId && token) {
@@ -107,16 +112,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      let resolvedCountry = country || null;
+      if (!resolvedCountry && token) {
+        try {
+          const parts = token.split('.');
+          if (parts.length === 3) {
+            const base64Url = parts[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            // Decode simple payload
+            const cleaned = base64.replace(/=+$/, '');
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+            let buffer = '';
+            for (let i = 0; i < cleaned.length; i += 4) {
+              const chunk =
+                ((chars.indexOf(cleaned[i]) & 63) << 18) |
+                (((i + 1 < cleaned.length ? chars.indexOf(cleaned[i + 1]) : 0) & 63) << 12) |
+                (((i + 2 < cleaned.length ? chars.indexOf(cleaned[i + 2]) : 0) & 63) << 6) |
+                ((i + 3 < cleaned.length ? chars.indexOf(cleaned[i + 3]) : 0) & 63);
+              buffer += String.fromCharCode((chunk >> 16) & 255);
+              if (i + 2 < cleaned.length) buffer += String.fromCharCode((chunk >> 8) & 255);
+              if (i + 3 < cleaned.length) buffer += String.fromCharCode(chunk & 255);
+            }
+            const payload = JSON.parse(decodeURIComponent(
+              buffer.split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
+            ));
+            resolvedCountry = payload.country || payload.user?.country || payload.address?.country || null;
+          }
+        } catch (e) {
+          console.error('Error decoding country from token', e);
+        }
+      }
+
+      if (!resolvedCountry && email) {
+        if (email.toLowerCase().includes('.lk') || email.toLowerCase().includes('lanka') || email.toLowerCase().includes('lk')) {
+          resolvedCountry = 'Sri Lanka';
+        } else if (email.toLowerCase().includes('.qa') || email.toLowerCase().includes('qatar') || email.toLowerCase().includes('qa')) {
+          resolvedCountry = 'Qatar';
+        } else {
+          resolvedCountry = 'Qatar';
+        }
+      }
+
       await Promise.all([
         AsyncStorage.setItem(SESSION_KEY, 'true'),
         token ? AsyncStorage.setItem(TOKEN_KEY, token) : Promise.resolve(),
         email ? AsyncStorage.setItem(EMAIL_KEY, email) : Promise.resolve(),
         AsyncStorage.setItem(USER_ID_KEY, resolvedUserId),
+        resolvedCountry ? AsyncStorage.setItem(COUNTRY_KEY, resolvedCountry) : Promise.resolve(),
       ]);
       setLoggedIn(true);
       if (token) setAuthToken(token);
       if (email) setUserEmail(email);
       setUserId(resolvedUserId);
+      setUserCountry(resolvedCountry);
     } catch (e) {
       console.error('Failed to save session', e);
     }
@@ -129,18 +177,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         AsyncStorage.removeItem(TOKEN_KEY),
         AsyncStorage.removeItem(EMAIL_KEY),
         AsyncStorage.removeItem(USER_ID_KEY),
+        AsyncStorage.removeItem(COUNTRY_KEY),
       ]);
       setLoggedIn(false);
       setAuthToken(null);
       setUserEmail(null);
       setUserId(null);
+      setUserCountry(null);
     } catch (e) {
       console.error('Failed to clear session', e);
     }
   };
 
   return (
-    <AuthContext.Provider value={{ loggedIn, loading, login, logout, userEmail, authToken, userId }}>
+    <AuthContext.Provider value={{ loggedIn, loading, login, logout, userEmail, authToken, userId, userCountry }}>
       {children}
     </AuthContext.Provider>
   );

@@ -6,11 +6,38 @@ import {
   TouchableOpacity,
   Alert,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
-const ASSIGNED_NURSES: any[] = [];
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '../src/context/AuthContext';
+import { trackingApi } from '../src/services/api';
+
+const parseCoordinates = (item: any): { lat: number; lng: number } | null => {
+  if (!item) return null;
+  let lat = Number(item.latitude ?? item.lat);
+  let lng = Number(item.longitude ?? item.lng);
+
+  if ((!lat || !lng || isNaN(lat) || isNaN(lng)) && item.map_link) {
+    const match = item.map_link.match(/[?&]q=([^&]+)/);
+    if (match && match[1]) {
+      const parts = match[1].split(',');
+      const parsedLat = parseFloat(parts[0]);
+      const parsedLng = parseFloat(parts[1]);
+      if (!isNaN(parsedLat) && !isNaN(parsedLng)) {
+        lat = parsedLat;
+        lng = parsedLng;
+      }
+    }
+  }
+
+  if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+    return { lat, lng };
+  }
+  return null;
+};
 
 function getHaversineDistance(lon1: number, lat1: number, lon2: number, lat2: number): number {
   const toRad = (x: number) => (x * Math.PI) / 180;
@@ -27,27 +54,78 @@ function getHaversineDistance(lon1: number, lat1: number, lon2: number, lat2: nu
 export default function ActivePickupScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { authToken } = useAuth();
   const { nurseId } = useLocalSearchParams<{ nurseId: string }>();
   const actualNurseId = nurseId ?? '1';
-  const nurse = ASSIGNED_NURSES.find(n => n.id === actualNurseId) ?? ASSIGNED_NURSES[0] ?? {
-    id: '',
-    name: 'Unknown Nurse',
-    initials: 'UN',
-    lat: 0,
-    lng: 0,
-    address: 'No Address',
-    zone: 'None',
-    phone: '',
-    pickupOrder: 0,
-    status: 'waiting',
-    etaMinutes: 0,
-  };
+
+  const [nurse, setNurse] = useState<any>(null);
+  const [totalNurses, setTotalNurses] = useState(0);
+  const [loading, setLoading] = useState(true);
 
   const [distance, setDistance] = useState(2.4);
   const [isUsingGps, setIsUsingGps] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
 
+  // Fetch Stop/Patient Details from API
   useEffect(() => {
+    if (!authToken) return;
+    async function loadNurse() {
+      try {
+        const stored = await AsyncStorage.getItem('driver_dropped_nurses');
+        const droppedMap = stored ? JSON.parse(stored) : {};
+
+        const result = await trackingApi.getDriverNurses(authToken);
+        if (result.success && result.data && result.data.tripNurses) {
+          const rawNurses = result.data.tripNurses;
+          setTotalNurses(rawNurses.length);
+          
+          const foundItem = rawNurses.find((item: any) => String(item.id) === actualNurseId) || rawNurses[0];
+          if (foundItem) {
+            const nurseObj = foundItem.nurse || {};
+            const patientObj = foundItem.patient || {};
+            const patientCoords = parseCoordinates(patientObj) || { lat: 0, lng: 0 };
+            
+            const initials = patientObj.name
+              ? patientObj.name
+                  .split(' ')
+                  .map((n: string) => n[0])
+                  .join('')
+                  .toUpperCase()
+                  .slice(0, 2)
+              : 'P';
+            
+            // Determine pickupOrder
+            const index = rawNurses.findIndex((item: any) => String(item.id) === foundItem.id);
+            const isDropped = droppedMap[String(foundItem.id)] !== undefined;
+
+            setNurse({
+              id: String(foundItem.id),
+              name: String(patientObj.name || 'Patient'),
+              initials,
+              lat: patientCoords.lat,
+              lng: patientCoords.lng,
+              address: String(patientObj.address || 'No Address'),
+              zone: String(patientObj.zone || 'None'),
+              phone: String(nurseObj.phone || nurseObj.mobile || ''),
+              nurseName: String(nurseObj.name || 'Nurse'),
+              pickupOrder: index >= 0 ? index + 1 : 1,
+              status: isDropped ? 'dropped' : 'waiting',
+              etaMinutes: foundItem.etaMinutes || 15,
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Error loading nurse details:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadNurse();
+  }, [authToken, actualNurseId]);
+
+  // GPS Tracking and Distance calculation
+  useEffect(() => {
+    if (!nurse) return;
     let subscription: Location.LocationSubscription | null = null;
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -86,35 +164,56 @@ export default function ActivePickupScreen() {
         subscription.remove();
       }
     };
-  }, [nurse.lng, nurse.lat]);
+  }, [nurse]);
 
   const handleCall = () => {
+    if (!nurse) return;
     Linking.openURL(`tel:${nurse.phone}`);
   };
 
   const handleNavigate = () => {
+    if (!nurse) return;
     const url = `https://www.google.com/maps/dir/?api=1&destination=${nurse.lat},${nurse.lng}&travelmode=driving`;
     Linking.openURL(url);
   };
 
   const handleConfirm = () => {
+    if (!nurse) return;
     Alert.alert(
-      'Confirm Pickup',
-      `Mark ${nurse.name} as picked up?`,
+      'Confirm Drop-off',
+      `Mark ${nurse.nurseName} as dropped off at ${nurse.name}'s location?`,
       [
         {text: 'Cancel', style: 'cancel'},
         {
           text: 'Confirm',
-          onPress: () => {
-            setConfirmed(true);
-            setTimeout(() => router.back(), 1200);
+          onPress: async () => {
+            try {
+              const stored = await AsyncStorage.getItem('driver_dropped_nurses');
+              const droppedMap = stored ? JSON.parse(stored) : {};
+              droppedMap[nurse.id] = Date.now();
+              await AsyncStorage.setItem('driver_dropped_nurses', JSON.stringify(droppedMap));
+              
+              setConfirmed(true);
+              setTimeout(() => router.back(), 1200);
+            } catch (e) {
+              console.error('Error confirming dropoff:', e);
+            }
           },
         },
       ],
     );
   };
 
-  const total = ASSIGNED_NURSES.length;
+  if (loading || !nurse) {
+    return (
+      <View style={[s.root, {paddingTop: insets.top, justifyContent: 'center', alignItems: 'center'}]}>
+        <ActivityIndicator size="large" color="#0077B6" />
+        <Text style={{color: '#6B7280', marginTop: 10}}>Loading active drop-off details...</Text>
+      </View>
+    );
+  }
+
+  const total = totalNurses;
   const progress = nurse.pickupOrder;
 
   const displayEta = Math.max(1, Math.round(distance * 2.5));
@@ -126,7 +225,7 @@ export default function ActivePickupScreen() {
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <Text style={s.backIcon}>←</Text>
         </TouchableOpacity>
-        <Text style={s.headerTitle}>Active Pickup</Text>
+        <Text style={s.headerTitle}>Active Drop-off</Text>
         <View style={s.progressChip}>
           <Text style={s.progressChipText}>{progress}/{total}</Text>
         </View>
@@ -145,7 +244,7 @@ export default function ActivePickupScreen() {
           </Text>
         </View>
 
-        {/* Nurse info */}
+        {/* Patient & Nurse info */}
         <View style={s.nurseCard}>
           <View style={s.nurseAvatar}>
             <Text style={s.nurseAvatarText}>{nurse.initials}</Text>
@@ -155,8 +254,8 @@ export default function ActivePickupScreen() {
           </View>
           <View style={s.nurseInfo}>
             <Text style={s.nurseName}>{nurse.name}</Text>
-            <Text style={s.nursePhone}>{nurse.phone}</Text>
-            <Text style={s.nurseAddr} numberOfLines={2}>📍 {nurse.address}</Text>
+            <Text style={s.nursePhone}>👩‍⚕️ Nurse: {nurse.nurseName}</Text>
+            <Text style={s.nurseAddr} numberOfLines={2}>📍 Destination: {nurse.address}</Text>
           </View>
         </View>
 
@@ -173,7 +272,7 @@ export default function ActivePickupScreen() {
           <View style={s.alertRow}>
             <View style={[s.alertDot, distance < 0.5 ? s.alertDotActive : {}]} />
             <Text style={[s.alertText, distance < 0.5 ? s.alertTextActive : {}]}>
-              500 m away — "Come outside"
+              500 m away — "Prepare to drop off"
             </Text>
             {distance < 0.5 && <Text style={s.alertSent}>✓ Sent</Text>}
           </View>
@@ -204,9 +303,9 @@ export default function ActivePickupScreen() {
           onPress={handleConfirm}
           disabled={confirmed}
           activeOpacity={0.85}>
-          <Text style={s.confirmIcon}>{confirmed ? '✓' : '🚌'}</Text>
+          <Text style={s.confirmIcon}>{confirmed ? '✓' : '🏠'}</Text>
           <Text style={s.confirmText}>
-            {confirmed ? 'Picked Up!' : 'Confirm Pickup'}
+            {confirmed ? 'Dropped Off!' : 'Confirm Drop-off'}
           </Text>
         </TouchableOpacity>
 

@@ -6,9 +6,11 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/context/AuthContext';
+import { useLocation } from '../../src/context/LocationContext';
 
 const NURSE = {
   name: 'Fatima Al-Mansouri',
@@ -43,8 +45,8 @@ const sc = StyleSheet.create({
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { logout, userEmail } = useAuth();
+  const { isLocationSharingEnabled, toggleLocationSharing } = useLocation();
 
-  // Dynamic user details
   const emailToShow = userEmail || NURSE.email;
   let nameToShow = NURSE.name;
   let initialsToShow = NURSE.initials;
@@ -56,14 +58,6 @@ export default function ProfileScreen() {
     nameToShow = `${firstName} ${lastName}`.trim() || userEmail.split('@')[0];
     initialsToShow = ((firstName.charAt(0) || '') + (lastName.charAt(0) || '')).toUpperCase() || 'US';
   }
-
-  const menuItems = [
-    { icon: '🔔', label: 'Notifications', sub: 'Vehicle proximity alerts' },
-    { icon: '📍', label: 'Location Sharing', sub: 'Currently active' },
-    { icon: '🔒', label: 'Change Password', sub: '' },
-    { icon: '📄', label: 'Attendance Report', sub: 'Download monthly report' },
-    { icon: '❓', label: 'Help & Support', sub: 'Contact VitaCare team' },
-  ];
 
   const handleLogout = () => {
     Alert.alert(
@@ -95,9 +89,8 @@ export default function ProfileScreen() {
           <Text style={s.id}>ID: {NURSE.id}</Text>
         </View>
 
-        {/* Today Stats */}
         <View style={s.statsSection}>
-          <Text style={s.sectionTitle}>Today's Summary</Text>
+          <Text style={s.sectionTitle}>{"Today's Summary"}</Text>
           <View style={s.statsRow}>
             <StatCard value={String(NURSE.todayVisits)} label="Visits" color="#16A34A" />
             <StatCard value={String(NURSE.completedVisits)} label="Completed" color="#22C55E" />
@@ -114,18 +107,25 @@ export default function ProfileScreen() {
           <InfoRow icon="📅" label="Joined" value={NURSE.joinDate} last />
         </View>
 
-        {/* Menu */}
-        <View style={s.menu}>
-          {menuItems.map((item, i) => (
-            <TouchableOpacity key={i} style={s.menuItem} activeOpacity={0.7}>
-              <Text style={s.menuIcon}>{item.icon}</Text>
-              <View style={s.menuText}>
-                <Text style={s.menuLabel}>{item.label}</Text>
-                {item.sub ? <Text style={s.menuSub}>{item.sub}</Text> : null}
-              </View>
-              <Text style={s.menuArrow}>›</Text>
-            </TouchableOpacity>
-          ))}
+        {/* Location Sharing Toggle */}
+        <View style={s.toggleCard}>
+          <View style={s.toggleRow}>
+            <View style={[s.toggleIconWrap, { backgroundColor: isLocationSharingEnabled ? '#DCFCE7' : '#F3F4F6' }]}>
+              <Text style={s.toggleIconText}>📍</Text>
+            </View>
+            <View style={s.toggleInfo}>
+              <Text style={s.toggleLabel}>Location Sharing</Text>
+              <Text style={[s.toggleSub, { color: isLocationSharingEnabled ? '#16A34A' : '#9CA3AF' }]}>
+                {isLocationSharingEnabled ? 'Active · updates every 30s' : 'Paused'}
+              </Text>
+            </View>
+            <Switch
+              value={isLocationSharingEnabled}
+              onValueChange={() => toggleLocationSharing()}
+              trackColor={{ false: '#D1D5DB', true: '#DCFCE7' }}
+              thumbColor={isLocationSharingEnabled ? '#16A34A' : '#9CA3AF'}
+            />
+          </View>
         </View>
 
         {/* Logout */}
@@ -216,6 +216,30 @@ const s = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
+  toggleCard: {
+    backgroundColor: '#FFF',
+    marginHorizontal: 16,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  toggleIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  toggleIconText: { fontSize: 20 },
+  toggleInfo: { flex: 1 },
+  toggleLabel: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 2 },
+  toggleSub: { fontSize: 12, fontWeight: '500' },
   menu: {
     backgroundColor: '#FFF',
     marginHorizontal: 16,

@@ -8,7 +8,12 @@
       "PowerShell(Get-ChildItem -Path \"D:\\\\NurcingCenter\" -Force | Where-Object { $_.PSIsContainer } | Select-Object Name)",
       "Bash(curl *)",
       "PowerShell(\\(Get-Acl \"D:\\\\Android\\\\Sdk\\\\ndk\\\\29.0.14033849\\\\toolchains\\\\llvm\\\\prebuilt\\\\windows-x86_64\\\\bin\\\\ld.lld.exe\"\\).Access | Select-Object IdentityReference, FileSystemRights, AccessControlType)",
-      "PowerShell(icacls *)"
+      "PowerShell(icacls *)",
+      "Bash(npx expo *)",
+      "Bash(node -e \"require\\('./node_modules/expo-task-manager/package.json'\\)\")",
+      "Bash(findstr android *)",
+      "Bash(Select-String -Path \"D:\\\\NurcingCenter\\\\expo-driver-app\\\\android\\\\app\\\\src\\\\main\\\\AndroidManifest.xml\" -Pattern \"BACKGROUND_LOCATION|FOREGROUND_SERVICE|task\")",
+      "Bash(Select-Object -First 10)"
     ]
   }
 }

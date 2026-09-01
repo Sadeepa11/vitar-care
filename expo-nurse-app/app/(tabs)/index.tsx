@@ -10,7 +10,6 @@ import {
 import MapboxGL from '@rnmapbox/maps';
 import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Location from 'expo-location';
 import { useAuth } from '../../src/context/AuthContext';
 import { useLocation } from '../../src/context/LocationContext';
 import { Nurse, Patient } from '../../src/types';
@@ -20,7 +19,7 @@ import NurseMemberCard from '../../src/components/NurseMemberCard';
 import UserLocationMarker from '../../src/components/UserLocationMarker';
 import PatientMarker from '../../src/components/PatientMarker';
 import PatientCard from '../../src/components/PatientCard';
-import { trackingApi, patientsApi } from '../../src/services/api';
+import { trackingApi } from '../../src/services/api';
 
 MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_PK ?? '');
 
@@ -37,9 +36,24 @@ const isValidCoordinate = (coords: any): coords is [number, number] => {
   );
 };
 
+function haversineDistance(coords1: [number, number], coords2: [number, number]): number {
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(coords2[1] - coords1[1]);
+  const dLon = toRad(coords2[0] - coords1[0]);
+  const lat1 = toRad(coords1[1]);
+  const lat2 = toRad(coords2[1]);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { userEmail, userId, authToken } = useAuth();
+  const { userEmail, userId, authToken, userCountry } = useAuth();
   const [selectedNurse, setSelectedNurse] = useState<Nurse | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [vehicles, setVehicles] = useState<any[]>([]);
@@ -49,10 +63,43 @@ export default function HomeScreen() {
   const { userCoords: rawUserCoords, requestLocation } = useLocation();
   const userCoords = rawUserCoords || DOHA_CENTER;
 
+  const [routeGeojson, setRouteGeojson] = useState<any>(null);
+  const [routeDistance, setRouteDistance] = useState<string | null>(null);
+  const [routeDuration, setRouteDuration] = useState<string | null>(null);
+
+  const [driverDistance, setDriverDistance] = useState<string | null>(null);
+  const [driverDuration, setDriverDuration] = useState<string | null>(null);
+
   const [hasFlippedToUser, setHasFlippedToUser] = useState(false);
+  const hasFlippedToDataRef = useRef(false);
   const bottomSheetRef = useRef<BottomSheet>(null);
   const cameraRef = useRef<MapboxGL.Camera>(null);
   const snapPoints = useMemo(() => ['14%', '48%', '88%'], []);
+
+  const shiftName = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour >= 6 && hour < 12) {
+      return 'Morning Shift';
+    } else if (hour >= 12 && hour < 17) {
+      return 'Afternoon Shift';
+    } else if (hour >= 17 && hour < 21) {
+      return 'Evening Shift';
+    } else {
+      return 'Night Shift';
+    }
+  }, []);
+
+  const displayLocation = useMemo(() => {
+    if (!userCountry) return 'Doha';
+    const norm = userCountry.trim().toLowerCase();
+    if (norm.includes('lanka') || norm === 'sri lanka' || norm === 'lk') {
+      return 'Sri Lanka';
+    }
+    if (norm.includes('qatar') || norm === 'qa') {
+      return 'Doha';
+    }
+    return userCountry;
+  }, [userCountry]);
 
   // Exclude the logged-in user from the team list to remove duplication
   const loggedInNurseId = userId || '1';
@@ -87,7 +134,7 @@ export default function HomeScreen() {
       name: baseNurse.name || name,
       initials: baseNurse.initials || initials,
     };
-  }, [userEmail, loggedInNurseId]);
+  }, [userEmail, loggedInNurseId, nurseTeam]);
 
   const activeCount = teamNurses.filter(n => n.status === 'at_work').length;
   const transitCount = teamNurses.filter(n => n.status === 'in_transit').length;
@@ -100,117 +147,273 @@ export default function HomeScreen() {
     }
   }, [rawUserCoords, hasFlippedToUser]);
 
+  // Single API call: GET /api/tracking/nurse/driver-location every 30 seconds
   useEffect(() => {
-    if (!userId) return;
+    if (!authToken) return;
 
-    async function fetchDriverLocation() {
-      const result = await trackingApi.getNurseDriverLocation(userId!, authToken);
-      if (result.success && result.lat != null && result.lng != null) {
-        setVehicles([{
-          id: 'driver',
-          name: 'Van',
-          driver: result.driverName ?? 'Driver',
-          lat: result.lat,
-          lng: result.lng,
-          speed: result.speed ?? 0,
-          capacity: 0,
-          nursesOnBoard: 0,
-        }]);
+    async function fetchRealTimeDetails() {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const todayStr = `${year}-${month}-${day}`;
+
+      const res = await trackingApi.getDriverLocation(authToken, todayStr);
+      if (res.success && res.data) {
+        const { driver, patient } = res.data;
+
+        // Process driver location and vehicle
+        if (driver && driver.location) {
+          const vLat = Number(driver.location.latitude);
+          const vLng = Number(driver.location.longitude);
+
+          if (!isNaN(vLat) && !isNaN(vLng)) {
+            setVehicles([{
+              id: String(driver.id ?? 'driver'),
+              name: 'Van',
+              driver: driver.name ?? 'Driver',
+              lat: vLat,
+              lng: vLng,
+              heading: driver.location.heading ?? 0,
+              speed: driver.location.speed != null ? Math.round(Number(driver.location.speed)) : 0,
+              vehicleNumber: driver.vehicleNumber || 'N/A',
+              mobile: driver.mobile || null,
+            }]);
+
+            // Map driver to nurseTeam to display in Nurses tab
+            const driverParts = (driver.name || 'Driver').trim().split(/\s+/);
+            const driverInitials = ((driverParts[0]?.[0] ?? '') + (driverParts[1]?.[0] ?? '')).toUpperCase() || 'D';
+            setNurseTeam([{
+              id: String(driver.id ?? 'driver'),
+              name: `${driver.name ?? 'Driver'} (Driver)`,
+              initials: driverInitials,
+              lat: vLat,
+              lng: vLng,
+              status: 'in_transit',
+              battery: 100,
+              lastSeen: 'Active now',
+              zone: driver.vehicleNumber || 'Van',
+              phone: driver.mobile || '',
+            }]);
+          } else {
+            setVehicles([]);
+            setNurseTeam([]);
+          }
+        } else {
+          setVehicles([]);
+          setNurseTeam([]);
+        }
+
+        // Process patient location
+        let patientCoords: { lat: number; lng: number } | null = null;
+        if (patient) {
+          let pLat = Number(patient.latitude);
+          let pLng = Number(patient.longitude);
+
+          // Fallback: Parse map_link to extract coordinates if lat/lng are missing, zero, or NaN
+          if ((!pLat || !pLng || isNaN(pLat) || isNaN(pLng)) && patient.map_link) {
+            const match = patient.map_link.match(/[?&]q=([^&]+)/);
+            if (match && match[1]) {
+              const parts = match[1].split(',');
+              const parsedLat = parseFloat(parts[0]);
+              const parsedLng = parseFloat(parts[1]);
+              if (!isNaN(parsedLat) && !isNaN(parsedLng)) {
+                pLat = parsedLat;
+                pLng = parsedLng;
+              }
+            }
+          }
+
+          const pName = patient.name || 'Patient';
+          const pParts = pName.trim().split(/\s+/);
+          const pInitials = ((pParts[0]?.[0] ?? '') + (pParts[1]?.[0] ?? '')).toUpperCase() || 'P';
+
+          if (!isNaN(pLat) && !isNaN(pLng) && pLat !== 0 && pLng !== 0) {
+            patientCoords = { lat: pLat, lng: pLng };
+            setPatients([{
+              id: String(patient.id ?? 'patient'),
+              name: pName,
+              initials: pInitials,
+              lat: pLat,
+              lng: pLng,
+              address: patient.address || '',
+              phone: patient.mobile || '',
+              condition: patient.diagnosis || undefined,
+            }]);
+          } else {
+            setPatients([]);
+          }
+        } else {
+          setPatients([]);
+        }
+
+        // Auto fly camera to show patient or driver on initial load
+        if (!hasFlippedToDataRef.current) {
+          if (patientCoords) {
+            cameraRef.current?.setCamera({
+              centerCoordinate: [patientCoords.lng, patientCoords.lat],
+              zoomLevel: 13,
+              animationDuration: 1000,
+            });
+            hasFlippedToDataRef.current = true;
+          } else if (driver && driver.location && !isNaN(Number(driver.location.longitude)) && !isNaN(Number(driver.location.latitude))) {
+            const dLng = Number(driver.location.longitude);
+            const dLat = Number(driver.location.latitude);
+            if (dLng !== 0 && dLat !== 0) {
+              cameraRef.current?.setCamera({
+                centerCoordinate: [dLng, dLat],
+                zoomLevel: 13,
+                animationDuration: 1000,
+              });
+              hasFlippedToDataRef.current = true;
+            }
+          }
+        }
       } else {
         setVehicles([]);
+        setPatients([]);
+        setNurseTeam([]);
       }
     }
 
-    fetchDriverLocation();
-    const interval = setInterval(fetchDriverLocation, 10000);
+    fetchRealTimeDetails();
+    const interval = setInterval(fetchRealTimeDetails, 10000);
     return () => clearInterval(interval);
-  }, [userId, authToken]);
+  }, [authToken]);
 
+  // Real-time Mapbox Route & Distance/Duration computation
   useEffect(() => {
-    if (!authToken) return;
-
-    function mapLocToNurse(loc: any, index: number): Nurse {
-      const name = String(loc.name ?? loc.full_name ?? loc.fullName ?? 'Nurse');
-      const parts = name.trim().split(/\s+/);
-      const initials = ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'N';
-      return {
-        id: String(loc.id ?? loc.user_id ?? index),
-        name,
-        initials,
-        lat: Number(loc.lat ?? loc.latitude ?? 0),
-        lng: Number(loc.lng ?? loc.longitude ?? 0),
-        status: loc.status ?? 'at_work',
-        battery: Number(loc.battery ?? 100),
-        lastSeen: loc.last_seen ?? loc.lastSeen ?? 'Just now',
-        zone: loc.zone ?? 'Doha',
-        phone: String(loc.phone ?? loc.phone_number ?? ''),
-      };
+    let startCoords: [number, number] | null = null;
+    if (vehicles.length > 0 && isValidCoordinate([vehicles[0].lng, vehicles[0].lat])) {
+      startCoords = [vehicles[0].lng, vehicles[0].lat];
+    } else if (isValidCoordinate(userCoords)) {
+      startCoords = userCoords;
     }
 
-    async function fetchAllLocations() {
-      const result = await trackingApi.getAllLocations(authToken);
-      if (!result.success || result.locations.length === 0) return;
+    const targetPatient = selectedPatient || (patients.length > 0 ? patients[0] : null);
 
-      const nurses: Nurse[] = [];
-      const driverVehicles: any[] = [];
+    if (!startCoords || !targetPatient || targetPatient.lat === 0 || targetPatient.lng === 0) {
+      setRouteGeojson(null);
+      setRouteDistance(null);
+      setRouteDuration(null);
+      return;
+    }
 
-      result.locations.forEach((loc: any, index: number) => {
-        const role = String(loc.role ?? loc.user_role ?? loc.type ?? '').toLowerCase();
-        if (role === 'driver') {
-          driverVehicles.push({
-            id: String(loc.id ?? loc.user_id ?? `driver-${index}`),
-            name: loc.vehicle_name ?? loc.vehicleName ?? 'Van',
-            driver: loc.name ?? 'Driver',
-            lat: Number(loc.lat ?? loc.latitude ?? 0),
-            lng: Number(loc.lng ?? loc.longitude ?? 0),
-            speed: Number(loc.speed ?? 0),
-            capacity: 0,
-            nursesOnBoard: 0,
-          });
+    const endCoords: [number, number] = [targetPatient.lng, targetPatient.lat];
+    const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_PK ?? '';
+
+    let active = true;
+
+    async function fetchRoute() {
+      try {
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startCoords![0]},${startCoords![1]};${endCoords[0]},${endCoords[1]}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (active && data && data.routes && data.routes[0]) {
+          const route = data.routes[0];
+          const distMeters = route.distance;
+          const durSeconds = route.duration;
+
+          let distStr = '';
+          if (distMeters < 1000) {
+            distStr = `${Math.round(distMeters)} m`;
+          } else {
+            distStr = `${(distMeters / 1000).toFixed(1)} km`;
+          }
+
+          let durStr = '';
+          if (durSeconds < 60) {
+            durStr = '< 1 min';
+          } else if (durSeconds < 3600) {
+            durStr = `${Math.round(durSeconds / 60)} min`;
+          } else {
+            const hrs = Math.floor(durSeconds / 3600);
+            const mins = Math.round((durSeconds % 3600) / 60);
+            durStr = `${hrs}h ${mins}m`;
+          }
+
+          setRouteDistance(distStr);
+          setRouteDuration(durStr);
+
+          if (route.geometry) {
+            setRouteGeojson({
+              type: 'Feature',
+              properties: {},
+              geometry: route.geometry,
+            });
+          }
         } else {
-          nurses.push(mapLocToNurse(loc, index));
+          throw new Error('No route returned');
         }
-      });
+      } catch (e) {
+        if (active) {
+          const distKm = haversineDistance(startCoords!, endCoords);
+          const distStr = distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`;
+          const durMins = Math.max(1, Math.round((distKm / 30) * 60));
+          const durStr = durMins >= 60 ? `${Math.floor(durMins / 60)}h ${durMins % 60}m` : `${durMins} min`;
 
-      if (nurses.length > 0) setNurseTeam(nurses);
-      if (driverVehicles.length > 0) setVehicles(driverVehicles);
-    }
-
-    fetchAllLocations();
-    const interval = setInterval(fetchAllLocations, 10000);
-    return () => clearInterval(interval);
-  }, [authToken]);
-
-  useEffect(() => {
-    if (!authToken) return;
-
-    function mapPatient(raw: any, index: number): Patient {
-      const name = String(raw.name ?? raw.full_name ?? raw.fullName ?? 'Patient');
-      const parts = name.trim().split(/\s+/);
-      const initials = ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'P';
-      return {
-        id: String(raw.id ?? index),
-        name,
-        initials,
-        lat: Number(raw.lat ?? raw.latitude ?? 0),
-        lng: Number(raw.lng ?? raw.longitude ?? 0),
-        address: String(raw.address ?? raw.location ?? ''),
-        phone: String(raw.phone ?? raw.phone_number ?? ''),
-        condition: raw.condition ?? raw.status ?? undefined,
-      };
-    }
-
-    async function fetchPatients() {
-      const result = await patientsApi.getAll(authToken);
-      if (result.success && result.patients.length > 0) {
-        setPatients(result.patients.map(mapPatient));
+          setRouteDistance(distStr);
+          setRouteDuration(durStr);
+          setRouteGeojson({
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'LineString',
+              coordinates: [startCoords!, endCoords],
+            },
+          });
+        }
       }
     }
 
-    fetchPatients();
-    const interval = setInterval(fetchPatients, 30000);
-    return () => clearInterval(interval);
-  }, [authToken]);
+    fetchRoute();
+
+    // Driver pickup distance & ETA computation (Nurse -> Driver/Vehicle)
+    if (vehicles.length > 0 && isValidCoordinate([vehicles[0].lng, vehicles[0].lat]) && isValidCoordinate(userCoords)) {
+      const vCoords: [number, number] = [vehicles[0].lng, vehicles[0].lat];
+
+      async function fetchDriverPickup() {
+        try {
+          const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${userCoords[0]},${userCoords[1]};${vCoords[0]},${vCoords[1]}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
+          const res = await fetch(url);
+          const data = await res.json();
+          if (active && data && data.routes && data.routes[0]) {
+            const route = data.routes[0];
+            const distM = route.distance;
+            const durS = route.duration;
+
+            const distStr = distM < 1000 ? `${Math.round(distM)} m` : `${(distM / 1000).toFixed(1)} km`;
+            const durStr = durS < 60 ? '< 1 min' : durS < 3600 ? `${Math.round(durS / 60)} min` : `${Math.floor(durS / 3600)}h ${Math.round((durS % 3600) / 60)}m`;
+
+            setDriverDistance(distStr);
+            setDriverDuration(durStr);
+          } else {
+            throw new Error('No driver route');
+          }
+        } catch (e) {
+          if (active) {
+            const distKm = haversineDistance(userCoords, vCoords);
+            const distStr = distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`;
+            const durMins = Math.max(1, Math.round((distKm / 30) * 60));
+            const durStr = durMins >= 60 ? `${Math.floor(durMins / 60)}h ${durMins % 60}m` : `${durMins} min`;
+
+            setDriverDistance(distStr);
+            setDriverDuration(durStr);
+          }
+        }
+      }
+
+      fetchDriverPickup();
+    } else {
+      setDriverDistance(null);
+      setDriverDuration(null);
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [vehicles, userCoords, patients, selectedPatient]);
 
   const handleNursePress = useCallback((nurse: Nurse) => {
     if (!nurse) return;
@@ -252,7 +455,6 @@ export default function HomeScreen() {
     if (pLat !== 0 || pLng !== 0) {
       cameraRef.current?.flyTo([pLng, pLat], 900);
     }
-    bottomSheetRef.current?.snapToIndex(1);
   }, []);
 
   const renderCard = useCallback(
@@ -297,24 +499,22 @@ export default function HomeScreen() {
           animationDuration={800}
         />
 
-        {/* Nurse team markers */}
-        {teamNurses.filter(n => n !== null && n !== undefined).map(nurse => {
-          const nurseLng = typeof nurse.lng === 'number' && !isNaN(nurse.lng) ? nurse.lng : DOHA_CENTER[0];
-          const nurseLat = typeof nurse.lat === 'number' && !isNaN(nurse.lat) ? nurse.lat : DOHA_CENTER[1];
-          const nurseId = nurse.id || `nurse-${Math.random()}`;
-          return (
-            <MapboxGL.MarkerView
-              key={nurseId}
-              coordinate={[nurseLng, nurseLat]}
-              anchor={{ x: 0.5, y: 1 }}>
-              <NurseAvatarMarker
-                nurse={nurse}
-                isSelected={selectedNurse?.id === nurseId}
-                onPress={() => handleNursePress(nurse)}
-              />
-            </MapboxGL.MarkerView>
-          );
-        })}
+
+        {/* Real-time Mapbox Route Polyline */}
+        {routeGeojson && (
+          <MapboxGL.ShapeSource id="patientRouteSource" shape={routeGeojson}>
+            <MapboxGL.LineLayer
+              id="patientRouteLine"
+              style={{
+                lineColor: '#16A34A',
+                lineWidth: 5,
+                lineJoin: 'round',
+                lineCap: 'round',
+                lineOpacity: 0.85,
+              }}
+            />
+          </MapboxGL.ShapeSource>
+        )}
 
         {/* Vehicle markers */}
         {vehicles.filter(v => v !== null && v !== undefined).map(v => {
@@ -326,24 +526,34 @@ export default function HomeScreen() {
               key={vId}
               coordinate={[vLng, vLat]}
               anchor={{ x: 0.5, y: 0.5 }}>
-              <VehicleMarker vehicle={v} />
+              <VehicleMarker
+                vehicle={v}
+                onPress={() => cameraRef.current?.flyTo([vLng, vLat], 900)}
+                distance={driverDistance}
+                duration={driverDuration}
+              />
             </MapboxGL.MarkerView>
           );
         })}
 
         {/* Patient markers */}
-        {patients.filter(p => p.lat !== 0 || p.lng !== 0).map(patient => (
-          <MapboxGL.MarkerView
-            key={`patient-${patient.id}`}
-            coordinate={[patient.lng, patient.lat]}
-            anchor={{ x: 0.5, y: 1 }}>
-            <PatientMarker
-              patient={patient}
-              isSelected={selectedPatient?.id === patient.id}
-              onPress={() => handlePatientPress(patient)}
-            />
-          </MapboxGL.MarkerView>
-        ))}
+        {patients.filter(p => p.lat !== 0 || p.lng !== 0).map(patient => {
+          const isThisSelected = selectedPatient?.id === patient.id || patients.length === 1;
+          return (
+            <MapboxGL.MarkerView
+              key={`patient-${patient.id}`}
+              coordinate={[patient.lng, patient.lat]}
+              anchor={{ x: 0.5, y: 1 }}>
+              <PatientMarker
+                patient={patient}
+                isSelected={selectedPatient?.id === patient.id}
+                onPress={() => handlePatientPress(patient)}
+                distance={isThisSelected ? routeDistance : null}
+                duration={isThisSelected ? routeDuration : null}
+              />
+            </MapboxGL.MarkerView>
+          );
+        })}
 
         {/* Custom User Location Marker — profile image in green ring */}
         {isValidCoordinate(userCoords) && (
@@ -387,11 +597,11 @@ export default function HomeScreen() {
         ]}>
         <View style={s.topLeft}>
           <View style={s.logo}>
-            <Text style={s.logoText}>VC</Text>
+            <Text style={s.logoText}>VN</Text>
           </View>
           <View>
             <Text style={s.appName}>VitaCare</Text>
-            <Text style={s.shift}>Morning Shift · Doha</Text>
+            <Text style={s.shift}>{shiftName} · {displayLocation}</Text>
           </View>
         </View>
         <View style={s.topRight}>
@@ -400,12 +610,6 @@ export default function HomeScreen() {
               <Text style={s.sosText}>🆘 {sosCount} SOS</Text>
             </View>
           )}
-          <TouchableOpacity style={s.iconBtn}>
-            <Text style={s.iconChar}>🔔</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.iconBtn}>
-            <Text style={s.iconChar}>⋯</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -415,76 +619,33 @@ export default function HomeScreen() {
           s.chips,
           { top: insets.top + (Platform.OS === 'android' ? 56 : 52) },
         ]}>
+        {routeDistance && routeDuration && (
+          <View style={[s.chip, { backgroundColor: '#F0FDF4', borderColor: '#16A34A', borderWidth: 1 }]}>
+            <Text style={[s.chipText, { color: '#15803D' }]}>
+              🏥 Patient: {routeDistance} ({routeDuration})
+            </Text>
+          </View>
+        )}
+        {driverDistance && driverDuration && (
+          <View style={[s.chip, { backgroundColor: '#EFF6FF', borderColor: '#3B82F6', borderWidth: 1 }]}>
+            <Text style={[s.chipText, { color: '#1D4ED8' }]}>
+              🚐 Driver: {driverDistance} ({driverDuration})
+            </Text>
+          </View>
+        )}
         <View style={[s.chip, { backgroundColor: '#DCFCE7' }]}>
           <View style={[s.chipDot, { backgroundColor: '#16A34A' }]} />
-          <Text style={[s.chipText, { color: '#15803D' }]}>{activeCount} Working</Text>
-        </View>
-        <View style={[s.chip, { backgroundColor: '#FEF3C7' }]}>
-          <View style={[s.chipDot, { backgroundColor: '#F59E0B' }]} />
-          <Text style={[s.chipText, { color: '#B45309' }]}>{transitCount} Transit</Text>
-        </View>
-        <View style={[s.chip, { backgroundColor: '#F0FDF4' }]}>
-          <Text style={[s.chipText, { color: '#15803D' }]}>
-            🚐 {vehicles.length} Vans
-          </Text>
-        </View>
-        <View style={[s.chip, { backgroundColor: '#FFF1F2' }]}>
-          <Text style={[s.chipText, { color: '#EF4444' }]}>
-            🏥 {patients.length} Patients
-          </Text>
+          <Text style={[s.chipText, { color: '#15803D' }]}>{activeCount} Active</Text>
         </View>
       </View>
 
-      {/* FAB */}
       <View style={s.fab}>
         <TouchableOpacity style={s.fabBtn} onPress={flyToUser}>
           <Text style={s.fabIcon}>📍</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[s.fabBtn, s.fabWhite]}
-          onPress={() => {
-            cameraRef.current?.setCamera({
-              centerCoordinate: DOHA_CENTER,
-              zoomLevel: 12,
-              animationDuration: 700,
-            });
-          }}>
-          <Text style={s.fabIcon}>🗺️</Text>
-        </TouchableOpacity>
       </View>
 
-      {/* BOTTOM SHEET */}
-      <BottomSheet
-        ref={bottomSheetRef}
-        index={0}
-        snapPoints={snapPoints}
-        backgroundStyle={s.sheetBg}
-        handleIndicatorStyle={s.sheetHandle}>
-        <View style={s.tabBar}>
-          <TouchableOpacity
-            style={[s.tab, activeTab === 'nurses' && s.tabActive]}
-            onPress={() => setActiveTab('nurses')}>
-            <Text style={[s.tabText, activeTab === 'nurses' && s.tabTextActive]}>
-              Nurses ({teamNurses.length})
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.tab, activeTab === 'patients' && s.tabActive]}
-            onPress={() => setActiveTab('patients')}>
-            <Text style={[s.tabText, activeTab === 'patients' && s.tabTextActive]}>
-              Patients ({patients.length})
-            </Text>
-          </TouchableOpacity>
-        </View>
-        <View style={s.divider} />
-        <BottomSheetFlatList
-          data={activeTab === 'nurses' ? teamNurses : patients}
-          keyExtractor={(item: any) => item?.id?.toString() || Math.random().toString()}
-          renderItem={activeTab === 'nurses' ? renderCard : renderPatientCard}
-          contentContainerStyle={{ paddingBottom: 80 }}
-          showsVerticalScrollIndicator={false}
-        />
-      </BottomSheet>
+
     </View>
   );
 }
@@ -558,7 +719,7 @@ const s = StyleSheet.create({
   },
   chipDot: { width: 7, height: 7, borderRadius: 4 },
   chipText: { fontSize: 12, fontWeight: '700' },
-  fab: { position: 'absolute', right: 16, bottom: 220, gap: 10 },
+  fab: { position: 'absolute', right: 16, bottom: 40, gap: 10 },
   fabBtn: {
     width: 50,
     height: 50,

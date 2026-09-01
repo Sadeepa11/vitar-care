@@ -46,7 +46,8 @@ export default function LoginScreen() {
       if (res.success) {
         // Successful login
         const userId = res.user?.id || res.user?.userId || res.user?.user_id || '';
-        await login(res.token, email, userId ? String(userId) : undefined);
+        const country = res.user?.country || res.user?.profile?.country || '';
+        await login(res.token, email, userId ? String(userId) : undefined, country || undefined);
       } else {
         const msg = res.message || 'Login failed';
         setError(msg);
@@ -136,7 +137,7 @@ export default function LoginScreen() {
         {/* Logo */}
         <View style={styles.logoWrap}>
           <View style={styles.logo}>
-            <Text style={styles.logoText}>VC</Text>
+            <Text style={styles.logoText}>VN</Text>
           </View>
           <Text style={styles.brand}>VitaCare</Text>
           <View style={styles.appBadge}>

@@ -116,29 +116,32 @@ export const authApi = {
 
 export const trackingApi = {
   async getDriverNurses(
-    driverId: string,
     token: string | null,
-  ): Promise<{ success: boolean; nurses: any[]; message?: string }> {
+    dateStr?: string,
+  ): Promise<{ success: boolean; data?: any; message?: string }> {
     try {
-      const response = await fetch(`${API_BASE_URL}/tracking/driver/${driverId}/nurses`, {
+      const dateParam = dateStr || (() => {
+        const d = new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      })();
+      const response = await fetch(`${API_BASE_URL}/tracking/driver/nurses?date=${dateParam}`, {
         headers: {
+          'accept': '*/*',
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
       const data = await response.json().catch(() => ({}));
       if (response.ok) {
-        const nurses =
-          Array.isArray(data) ? data :
-          Array.isArray(data.nurses) ? data.nurses :
-          Array.isArray(data.data) ? data.data :
-          [];
-        return { success: true, nurses };
+        return { success: true, data };
       }
-      return { success: false, nurses: [], message: data.message || 'Failed to fetch assigned nurses' };
+      return { success: false, message: data.message || 'Failed to fetch assigned nurses' };
     } catch (error: any) {
       console.error('Tracking API error:', error);
-      return { success: false, nurses: [], message: error?.message || 'Network error' };
+      return { success: false, message: error?.message || 'Network error' };
     }
   },
 

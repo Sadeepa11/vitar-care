@@ -61,9 +61,8 @@ export default function VisitsScreen() {
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={s.header}>
-        <Text style={s.headerTitle}>Today's Visits</Text>
+        <Text style={s.headerTitle}>{"Today's Visits"}</Text>
         <Text style={s.headerSub}>
           {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
         </Text>

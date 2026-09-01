@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Linking } from 'react-native';
 import { Nurse, NurseStatus } from '../types';
 
 const STATUS_COLOR: Record<NurseStatus, string> = {
@@ -108,9 +108,21 @@ export default function NurseMemberCard({ nurse, isSelected, onPress }: Props) {
       {/* Right side */}
       <View style={styles.right}>
         <Battery level={batteryLevel} />
-        <TouchableOpacity style={styles.callBtn}>
-          <Text style={styles.callIcon}>📞</Text>
-        </TouchableOpacity>
+        {nurse.phone ? (
+          <TouchableOpacity
+            style={styles.callBtn}
+            onPress={(e) => {
+              e.stopPropagation();
+              Linking.openURL(`tel:${nurse.phone}`);
+            }}
+          >
+            <Text style={styles.callIcon}>📞</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={[styles.callBtn, { opacity: 0.4 }]}>
+            <Text style={styles.callIcon}>📞</Text>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
