@@ -5,6 +5,7 @@ export interface LoginResponse {
   message?: string;
   token?: string;
   user?: any;
+  fcmToken?: string;
 }
 
 export interface VerifyResponse {
@@ -30,11 +31,23 @@ export const authApi = {
       
       const data = await response.json().catch(() => ({}));
       if (response.ok) {
+        const extractedFcm =
+          data.fcmToken ||
+          data.fcm_token ||
+          data.fcm ||
+          data.user?.fcmToken ||
+          data.user?.fcm_token ||
+          data.user?.fcm ||
+          data.data?.fcmToken ||
+          data.data?.fcm_token ||
+          data.data?.fcm;
+
         return {
           success: true,
           message: data.message || 'Login successful',
           token: data.token || data.accessToken || data.data?.token,
           user: data.user || data.data?.user || { email },
+          fcmToken: extractedFcm,
         };
       } else {
         return {
