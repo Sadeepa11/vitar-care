@@ -7,29 +7,46 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { LocationProvider } from '../src/context/LocationContext';
 import LoginScreen from '../src/screens/LoginScreen';
+import { FcmTokenModal } from '../src/components/FcmTokenModal';
 
 function AppGate() {
-  const { loggedIn, loading } = useAuth();
+  const { loggedIn, loading, showFcmModal, fcmTokenToShow, closeFcmModal } = useAuth();
 
   if (loading) {
-    return null; // Or a splash screen / loading spinner
+    return null;
   }
 
   if (!loggedIn) {
-    return <LoginScreen />;
+    return (
+      <>
+        <LoginScreen />
+        <FcmTokenModal
+          visible={showFcmModal}
+          token={fcmTokenToShow}
+          onClose={closeFcmModal}
+        />
+      </>
+    );
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="active-pickup"
-        options={{
-          headerShown: false,
-          presentation: 'card',
-        }}
+    <>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="active-pickup"
+          options={{
+            headerShown: false,
+            presentation: 'card',
+          }}
+        />
+      </Stack>
+      <FcmTokenModal
+        visible={showFcmModal}
+        token={fcmTokenToShow}
+        onClose={closeFcmModal}
       />
-    </Stack>
+    </>
   );
 }
 

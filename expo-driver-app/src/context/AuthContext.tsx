@@ -1,15 +1,19 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getDeviceFcmTokenAsync } from '../utils/fcm';
 
 type AuthContextType = {
   loggedIn: boolean;
   loading: boolean;
-  login: (token?: string, email?: string, userId?: string, country?: string) => Promise<void>;
+  login: (token?: string, email?: string, userId?: string, country?: string, fcmTokenFromLogin?: string) => Promise<void>;
   logout: () => Promise<void>;
   userEmail: string | null;
   authToken: string | null;
   userId: string | null;
   userCountry: string | null;
+  fcmTokenToShow: string | null;
+  showFcmModal: boolean;
+  closeFcmModal: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -66,6 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null);
   const [userCountry, setUserCountry] = useState<string | null>(null);
 
+  // FCM Token Modal states
+  const [fcmTokenToShow, setFcmTokenToShow] = useState<string | null>(null);
+  const [showFcmModal, setShowFcmModal] = useState(false);
+
+  const closeFcmModal = () => {
+    setShowFcmModal(false);
+  };
+
   useEffect(() => {
     const loadSession = async () => {
       try {
@@ -85,7 +97,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (storedUserId) {
             setUserId(storedUserId);
           } else if (token) {
-            // Attempt to recover from token if userId is missing but token is present
             const decodedId = decodeUserIdFromToken(token);
             if (decodedId) {
               setUserId(decodedId);
@@ -102,9 +113,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadSession();
   }, []);
 
-  const login = async (token?: string, email?: string, uId?: string, country?: string) => {
+  const login = async (
+    token?: string,
+    email?: string,
+    uId?: string,
+    country?: string,
+    fcmTokenFromLogin?: string
+  ) => {
     try {
-      let resolvedUserId = uId || '15'; // Default to 15 if not provided
+      let resolvedUserId = uId || '15';
       if (!uId && token) {
         const decodedId = decodeUserIdFromToken(token);
         if (decodedId) {
@@ -119,7 +136,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (parts.length === 3) {
             const base64Url = parts[1];
             const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-            // Decode simple payload
             const cleaned = base64.replace(/=+$/, '');
             const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
             let buffer = '';
@@ -160,11 +176,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         AsyncStorage.setItem(USER_ID_KEY, resolvedUserId),
         resolvedCountry ? AsyncStorage.setItem(COUNTRY_KEY, resolvedCountry) : Promise.resolve(),
       ]);
+
       setLoggedIn(true);
       if (token) setAuthToken(token);
       if (email) setUserEmail(email);
       setUserId(resolvedUserId);
       setUserCountry(resolvedCountry);
+
+      // Handle FCM Token extraction & display modal after login
+      let fcmTokenToDisplay = fcmTokenFromLogin || null;
+
+      if (!fcmTokenToDisplay) {
+        fcmTokenToDisplay = await getDeviceFcmTokenAsync();
+      }
+
+      if (fcmTokenToDisplay) {
+        setFcmTokenToShow(fcmTokenToDisplay);
+        setShowFcmModal(true);
+      }
     } catch (e) {
       console.error('Failed to save session', e);
     }
@@ -184,13 +213,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUserEmail(null);
       setUserId(null);
       setUserCountry(null);
+      setFcmTokenToShow(null);
+      setShowFcmModal(false);
     } catch (e) {
       console.error('Failed to clear session', e);
     }
   };
 
   return (
-    <AuthContext.Provider value={{ loggedIn, loading, login, logout, userEmail, authToken, userId, userCountry }}>
+    <AuthContext.Provider
+      value={{
+        loggedIn,
+        loading,
+        login,
+        logout,
+        userEmail,
+        authToken,
+        userId,
+        userCountry,
+        fcmTokenToShow,
+        showFcmModal,
+        closeFcmModal,
+      }}>
       {children}
     </AuthContext.Provider>
   );
