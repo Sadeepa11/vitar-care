@@ -1,5 +1,16 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive",
-    "git.autoRepositoryDetection": false,
-    "git.scanRepositories": ["."]
+  "java.configuration.updateBuildConfiguration": "interactive",
+  "git.autoRepositoryDetection": false,
+  "git.scanRepositories": [
+    "."
+  ],
+  "task.allowAutomaticTasks": true,
+  "debug.openDebug": "neverOpen",
+  "terminal.integrated.inheritEnv": false,
+  "tasks": {
+    "label": "lint on open",
+    "type": "shell",
+    "command": "npm run lint",
+    "runOn": "folderOpen"
+  }
 }

@@ -47,7 +47,8 @@ export default function LoginScreen() {
         // Successful login
         const userId = res.user?.id || res.user?.userId || res.user?.user_id || '';
         const country = res.user?.country || res.user?.profile?.country || '';
-        await login(res.token, email, userId ? String(userId) : undefined, country || undefined);
+        const fcmToken = res.fcmToken || res.user?.fcmToken || res.user?.fcm_token || res.user?.fcm;
+        await login(res.token, email, userId ? String(userId) : undefined, country || undefined, fcmToken);
       } else {
         const msg = res.message || 'Login failed';
         setError(msg);
